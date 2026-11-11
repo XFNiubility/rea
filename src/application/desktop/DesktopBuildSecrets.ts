@@ -1,6 +1,8 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
-import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { ArtifactResourceRetryFailure } from "../../artifacts/ArtifactResourceScope.js";
+import {
+  ArtifactResourceScope,
+  ArtifactResourceRetryFailure,
+} from "../../artifacts/ArtifactResourceScope.js";
 import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import type { BuildSource } from "../../domain/desktop/appBuild.js";
 import {
@@ -18,6 +20,7 @@ import {
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { compositeKey } from "../../domain/unicodeCodePointOrder.js";
 import type {
   AgentEnvComputer,
   DriverResult,
@@ -166,7 +169,10 @@ export class DesktopBuildSecrets {
 
   /** Every secret no bundle may hold: each value typed or kept here, then each the folder holds now, readable by others or not. */
   async all(signal?: AbortSignal): Promise<KnownSecret[]> {
-    signal?.throwIfAborted();
+    if (signal?.aborted)
+      throw new AnalysisCancelledError("export_build_environment", {
+        cause: signal.reason,
+      });
     let handles: string[];
     try {
       handles = await listBuildSecretHandles(this.directory);
@@ -193,7 +199,10 @@ export class DesktopBuildSecrets {
           }),
         ),
       });
-    signal?.throwIfAborted();
+    if (signal?.aborted)
+      throw new AnalysisCancelledError("export_build_environment", {
+        cause: signal.reason,
+      });
     const refused = read.find(({ file }) => !file.ok);
     if (refused !== undefined && !refused.file.ok)
       throw new AnalysisInputError("export_build_environment", {
@@ -203,14 +212,14 @@ export class DesktopBuildSecrets {
       });
     const known = this.#known();
     const held = new Set(
-      known.map(({ handle, value }) => `${handle}\0${value}`),
+      known.map(({ handle, value }) => compositeKey([handle, value])),
     );
     return [
       ...known,
       ...read.flatMap(({ handle, file }) =>
         file.ok &&
         isScannableSecret(file.value) &&
-        !held.has(`${handle}\0${file.value}`)
+        !held.has(compositeKey([handle, file.value]))
           ? [{ handle, value: file.value }]
           : [],
       ),
